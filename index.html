@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SVGrapher</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <style>
+        :root {
+            --primary: #007bff;
+            --bg: #f0f0f0;
+            --card: #ffffff;
+            --text: #333333;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        h1 { margin-top: 20px; color: var(--primary); font-size: 1.5rem; }
+        
+        .controls {
+            background: var(--card);
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            width: 100%;
+            max-width: 500px;
+            box-sizing: border-box;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+
+        .canvas-container {
+            background: white;
+            padding: 5px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            max-width: 100%;
+            overflow: auto;
+            position: relative;
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+        }
+
+        canvas {
+            border: 1px solid #ccc;
+            display: block;
+            cursor: crosshair;
+            touch-action: none; /* Prevents scrolling while drawing/selecting */
+        }
+
+        button {
+            padding: 10px 15px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            flex: 1;
+        }
+
+        button:active { opacity: 0.8; }
+        button.active { background: #28a745; }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .upload-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        #file-input { display: none; }
+        .upload-btn {
+            background: var(--primary);
+            padding: 20px 40px;
+            border-radius: 15px;
+            font-size: 1.2rem;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="upload-screen" class="upload-overlay">
+        <h1>SVGrapher</h1>
+        <p>Turn photos into SVGs for Cricut</p>
+        <button class="upload-btn" onclick="document.getElementById('file-input').click()">📸 Pick a Photo</button>
+        <input type="file" id="file-input" accept="image/*">
+    </div>
+
+    <h1>SVGrapher</h1>
+    
+    <div class="controls">
+        <div class="toolbar">
+            <button id="toolSelect" class="active">Select Color</button>
+            <button id="toolEraser">Eraser</button>
+            <button id="toolCrop">Crop</button>
+        </div>
+
+        <div class="row">
+            <div class="control-group" style="flex:1">
+                <label>Target Color:</label>
+                <input type="color" id="targetColor" value="#000000" style="width:100%; height:40px;">
+            </div>
+            <div class="control-group" style="flex:2">
+                <label>Tolerance: <span id="toleranceValue">50</span></label>
+                <input type="range" id="tolerance" min="0" max="255" value="50">
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="control-group" style="flex:1">
+                <label>Smoothing:</label>
+                <input type="range" id="smoothRange" min="0" max="10" value="1">
+            </div>
+            <div class="control-group" style="flex:1">
+                <label>Zoom: <span id="zoomValue">100%</span></label>
+                <input type="range" id="zoomRange" min="0.5" max="3" step="0.1" value="1">
+            </div>
+        </div>
+
+        <button id="exportBtn" style="background:#28a745;">Export to SVG</button>
+    </div>
+
+    <div class="canvas-container">
+        <canvas id="editorCanvas"></canvas>
+    </div>
+
+    <script src="imagetracer_v1.2.6.js"></script>
+    <script>
+        let originalCanvas = document.createElement('canvas');
+        let editorCanvas = document.getElementById('editorCanvas');
+        let ctx = editorCanvas.getContext('2d');
+        let targetColorInput = document.getElementById('targetColor');
+        let toleranceInput = document.getElementById('tolerance');
+        let toleranceValue = document.getElementById('toleranceValue');
+        let zoomRange = document.getElementById('zoomRange');
+        let zoomValue = document.getElementById('zoomValue');
+        let smoothRange = document.getElementById('smoothRange');
+        let exportBtn = document.getElementById('exportBtn');
+        let fileInput = document.getElementById('file-input');
+        let uploadScreen = document.getElementById('upload-screen');
+
+        let toolSelect = document.getElementById('toolSelect');
+        let toolEraser = document.getElementById('toolEraser');
+        let toolCrop = document.getElementById('toolCrop');
+
+        let currentTool = 'select';
+        let originalImageData = null;
+        let currentZoom = 1;
+        let isDrawing = false;
+        let cropStart = null;
+
+        fileInput.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    uploadScreen.style.display = 'none';
+                    
+                    // Initial Setup
+                    originalCanvas.width = img.width;
+                    originalCanvas.height = img.height;
+                    const oCtx = originalCanvas.getContext('2d');
+                    oCtx.drawImage(img, 0, 0);
+
+                    editorCanvas.width = img.width;
+                    editorCanvas.height = img.height;
+                    originalImageData = oCtx.getImageData(0, 0, img.width, img.height);
+                    
+                    autoDetectColor();
+                    processImage();
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        };
+
+        function setTool(tool) {
+            currentTool = tool;
+            [toolSelect, toolEraser, toolCrop].forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`tool${tool.charAt(0).toUpperCase() + tool.slice(1)}`).classList.add('active');
+        }
+
+        toolSelect.onclick = () => setTool('select');
+        toolEraser.onclick = () => setTool('eraser');
+        toolCrop.onclick = () => setTool('crop');
+
+        function autoDetectColor() {
+            if (!originalImageData) return;
+            const counts = {};
+            let maxCount = 0;
+            let dominantColor = '#000000';
+            for (let i = 0; i < originalImageData.data.length; i += 40) {
+                const r = originalImageData.data[i], g = originalImageData.data[i + 1], b = originalImageData.data[i + 2];
+                if (r > 240 && g > 240 && b > 240) continue;
+                const hex = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+                counts[hex] = (counts[hex] || 0) + 1;
+                if (counts[hex] > maxCount) { maxCount = counts[hex]; dominantColor = hex; }
+            }
+            targetColorInput.value = dominantColor;
+        }
+
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+        }
+
+        function processImage() {
+            if (!originalImageData) return;
+            const targetRgb = hexToRgb(targetColorInput.value);
+            const tolerance = parseInt(toleranceInput.value);
+            const smoothing = parseInt(smoothRange.value);
+            toleranceValue.textContent = tolerance;
+
+            const newImageData = new ImageData(new Uint8ClampedArray(originalImageData.data), originalImageData.width, originalImageData.height);
+            for (let i = 0; i < newImageData.data.length; i += 4) {
+                const r = newImageData.data[i], g = newImageData.data[i + 1], b = newImageData.data[i + 2];
+                const distance = Math.sqrt(Math.pow(r - targetRgb.r, 2) + Math.pow(g - targetRgb.g, 2) + Math.pow(b - targetRgb.b, 2));
+                if (distance <= tolerance) {
+                    newImageData.data[i] = 0; newImageData.data[i + 1] = 0; newImageData.data[i + 2] = 0; newImageData.data[i + 3] = 255;
+                } else {
+                    newImageData.data[i] = 255; newImageData.data[i + 1] = 255; newImageData.data[i + 2] = 255; newImageData.data[i + 3] = 255;
+                }
+            }
+
+            if (smoothing > 0) {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = editorCanvas.width;
+                tempCanvas.height = editorCanvas.height;
+                const tCtx = tempCanvas.getContext('2d');
+                tCtx.putImageData(newImageData, 0, 0);
+                
+                ctx.clearRect(0, 0, editorCanvas.width, editorCanvas.height);
+                ctx.filter = `blur(${smoothing}px)`;
+                ctx.drawImage(tempCanvas, 0, 0);
+                ctx.filter = 'none';
+                
+                const blurredData = ctx.getImageData(0, 0, editorCanvas.width, editorCanvas.height);
+                for (let i = 0; i < blurredData.data.length; i += 4) {
+                    const avg = (blurredData.data[i] + blurredData.data[i+1] + blurredData.data[i+2]) / 3;
+                    const val = avg < 128 ? 0 : 255;
+                    blurredData.data[i] = blurredData.data[i+1] = blurredData.data[i+2] = val;
+                }
+                ctx.putImageData(blurredData, 0, 0);
+            } else {
+                ctx.putImageData(newImageData, 0, 0);
+            }
+            
+            applyZoom();
+        }
+
+        function applyZoom() {
+            editorCanvas.style.width = `${editorCanvas.width * currentZoom}px`;
+            editorCanvas.style.height = `${editorCanvas.height * currentZoom}px`;
+            zoomValue.textContent = `${Math.round(currentZoom * 100)}%`;
+        }
+
+        zoomRange.oninput = () => {
+            currentZoom = parseFloat(zoomRange.value);
+            applyZoom();
+        };
+
+        // Unified Event Handler for Mouse and Touch
+        function handlePointerDown(e) {
+            const rect = editorCanvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            const x = Math.floor((clientX - rect.left) / currentZoom);
+            const y = Math.floor((clientY - rect.top) / currentZoom);
+
+            if (currentTool === 'select') {
+                const oCtx = originalCanvas.getContext('2d');
+                const d = oCtx.getImageData(x, y, 1, 1).data;
+                targetColorInput.value = `#${((1 << 24) + (d[0] << 16) + (d[1] << 8) + d[2]).toString(16).slice(1)}`;
+                processImage();
+            } else if (currentTool === 'eraser') {
+                isDrawing = true;
+                erase(x, y);
+            } else if (currentTool === 'crop') {
+                cropStart = { x, y };
+            }
+        }
+
+        function handlePointerMove(e) {
+            if (!isDrawing && !cropStart) return;
+            const rect = editorCanvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+            const x = Math.floor((clientX - rect.left) / currentZoom);
+            const y = Math.floor((clientY - rect.top) / currentZoom);
+
+            if (isDrawing) erase(x, y);
+        }
+
+        function handlePointerUp(e) {
+            if (cropStart) {
+                const rect = editorCanvas.getBoundingClientRect();
+                // For touch end, we might need to use changedTouches
+                const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+                const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+                
+                const x = Math.floor((clientX - rect.left) / currentZoom);
+                const y = Math.floor((clientY - rect.top) / currentZoom);
+                performCrop(cropStart.x, cropStart.y, x, y);
+                cropStart = null;
+            }
+            isDrawing = false;
+        }
+
+        editorCanvas.addEventListener('mousedown', handlePointerDown);
+        window.addEventListener('mousemove', handlePointerMove);
+        window.addEventListener('mouseup', handlePointerUp);
+        
+        editorCanvas.addEventListener('touchstart', (e) => { e.preventDefault(); handlePointerDown(e); });
+        editorCanvas.addEventListener('touchmove', (e) => { e.preventDefault(); handlePointerMove(e); });
+        editorCanvas.addEventListener('touchend', (e) => { e.preventDefault(); handlePointerUp(e); });
+
+        function erase(x, y) {
+            const radius = 10;
+            const oCtx = originalCanvas.getContext('2d');
+            oCtx.fillStyle = 'white';
+            oCtx.beginPath();
+            oCtx.arc(x, y, radius, 0, Math.PI * 2);
+            oCtx.fill();
+            originalImageData = oCtx.getImageData(0, 0, originalCanvas.width, originalCanvas.height);
+            processImage();
+        }
+
+        function performCrop(x1, y1, x2, y2) {
+            const left = Math.max(0, Math.min(x1, x2));
+            const top = Math.max(0, Math.min(y1, y2));
+            const width = Math.min(originalCanvas.width - left, Math.abs(x1 - x2));
+            const height = Math.min(originalCanvas.height - top, Math.abs(y1 - y2));
+
+            if (width < 5 || height < 5) return;
+
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width;
+            tempCanvas.height = height;
+            tempCanvas.getContext('2d').drawImage(originalCanvas, left, top, width, height, 0, 0, width, height);
+
+            originalCanvas.width = width;
+            originalCanvas.height = height;
+            originalCanvas.getContext('2d').drawImage(tempCanvas, 0, 0);
+
+            editorCanvas.width = width;
+            editorCanvas.height = height;
+            originalImageData = originalCanvas.getContext('2d').getImageData(0, 0, width, height);
+            processImage();
+        }
+
+        targetColorInput.oninput = processImage;
+        toleranceInput.oninput = processImage;
+        smoothRange.oninput = processImage;
+
+        exportBtn.onclick = () => {
+            const targetHex = targetColorInput.value.replace('#', '');
+            const fileName = `SVGrapher_${targetHex}.svg`;
+            
+            const exportCanvas = document.createElement('canvas');
+            exportCanvas.width = editorCanvas.width;
+            exportCanvas.height = editorCanvas.height;
+            const eCtx = exportCanvas.getContext('2d');
+            eCtx.drawImage(editorCanvas, 0, 0);
+
+            const imgData = eCtx.getImageData(0, 0, exportCanvas.width, exportCanvas.height);
+            const svgString = ImageTracer.imagedataToSVG(imgData, {
+                ltres: 0.1, qtres: 0.1, pathomit: 1,
+                pal: [{ r: 0, g: 0, b: 0, a: 255 }, { r: 255, g: 255, b: 255, a: 255 }]
+            });
+
+            const blob = new Blob([svgString], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        };
+    </script>
+</body>
+</html>
