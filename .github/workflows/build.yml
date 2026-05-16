@@ -1,17 +1,21 @@
- name: Build iOS IPA
+  name: Build iOS IPA
   on: [push]
   jobs:
     build:
       runs-on: macos-latest
       steps:
          - uses: actions/checkout@v4
-         - name: Capacitor Sync
+         - name: Setup Node
+          uses: actions/setup-node@v4
+          with:
+            node-version: 18
+         - name: Install Capacitor
           run: |
             npm install @capacitor/core @capacitor/cli @capacitor/ios
-            npx cap init SVGrapher com.svgrapher.app --web-dir .
+            npx cap init SVGrapher com.svgrapher.app --web-dir . --npm-client npm
             npx cap add ios
             npx cap sync ios
-         - name: Build IPA (Unsigned)
+         - name: Build App
           run: |
             xcodebuild -workspace ios/App/App.xcworkspace \
                        -scheme App \
@@ -20,8 +24,9 @@
                        -derivedDataPath build \
                        CODE_SIGN_IDENTITY="" \
                        CODE_SIGNING_REQUIRED=NO \
-                       CODE_SIGNING_ALLOWED=NO
-         - name: Archive IPA
+                       CODE_SIGNING_ALLOWED=NO \
+                       clean build
+         - name: Package IPA
           run: |
             mkdir -p build/IPA
             cp -r build/Build/Products/Release-iphoneos/App.app build/IPA/
